@@ -1,0 +1,13 @@
+__pycache__/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+*.db
+node_modules/
+dist/
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+.env
