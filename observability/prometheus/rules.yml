@@ -1,0 +1,110 @@
+# Recording rules precompute the ratios the dashboards and alerts share.
+# Alert thresholds mirror the status colours in the React dashboard (src/status.ts).
+groups:
+  - name: streampulse-recording
+    rules:
+      - record: streampulse:playback_error_ratio:rate5m
+        expr: |
+          sum(rate(streampulse_playback_errors_total[5m]))
+          / sum(rate(streampulse_sessions_started_total[5m]))
+
+      - record: streampulse:playback_error_ratio_by_cdn:rate5m
+        expr: |
+          sum by (cdn) (rate(streampulse_playback_errors_total[5m]))
+          / sum by (cdn) (rate(streampulse_sessions_started_total[5m]))
+
+      - record: streampulse:ad_fill_ratio:rate5m
+        expr: |
+          sum(rate(streampulse_ad_impressions_total[5m]))
+          / sum(rate(streampulse_ad_requests_total[5m]))
+
+      - record: streampulse:startup_seconds:p95_5m
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(streampulse_playback_startup_seconds_bucket[5m])))
+
+      - record: streampulse:http_request_duration_seconds:p95_5m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, path) (rate(streampulse_http_request_duration_seconds_bucket[5m]))
+          )
+
+  - name: streampulse-alerts
+    rules:
+      - alert: PlaybackErrorRateCritical
+        expr: streampulse:playback_error_ratio:rate5m > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Playback error rate is {{ $value | humanizePercentage }}"
+          description: "More than 5% of sessions hit a fatal playback error over the last 5 minutes."
+
+      - alert: PlaybackErrorRateElevated
+        expr: streampulse:playback_error_ratio:rate5m > 0.02
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Playback error rate is {{ $value | humanizePercentage }}"
+
+      - alert: CdnPlaybackErrorRateHigh
+        expr: streampulse:playback_error_ratio_by_cdn:rate5m > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "CDN {{ $labels.cdn }} error rate is {{ $value | humanizePercentage }}"
+          description: "A single CDN is failing; consider shifting traffic to another provider."
+
+      - alert: SlowVideoStart
+        expr: streampulse:startup_seconds:p95_5m > 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 video start time is {{ $value | humanizeDuration }}"
+
+      - alert: LowAdFillRate
+        expr: |
+          streampulse:ad_fill_ratio:rate5m < 0.8
+          and on() sum(rate(streampulse_ad_requests_total[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Ad fill rate dropped to {{ $value | humanizePercentage }}"
+
+      - alert: TelemetryIngestStalled
+        expr: (sum(rate(streampulse_events_ingested_total[5m])) or vector(0)) == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No telemetry events received for 10 minutes"
+
+      - alert: ApiHighServerErrorRate
+        expr: |
+          sum(rate(streampulse_http_requests_total{status=~"5.."}[5m]))
+          / sum(rate(streampulse_http_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "More than 5% of API requests are failing with 5xx"
+
+      - alert: ApiHighLatency
+        expr: max(streampulse:http_request_duration_seconds:p95_5m) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API p95 latency above 1s on at least one route"
+
+      - alert: ApiTargetDown
+        expr: up{job="streampulse-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Prometheus cannot scrape the StreamPulse API"
