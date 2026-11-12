@@ -1,0 +1,84 @@
+# Full local stack: API + Postgres + traffic simulator + React dashboard + Prometheus + Grafana.
+#   docker compose up --build
+#   Dashboard  http://localhost:8080      API docs  http://localhost:8000/docs
+#   Prometheus http://localhost:9090      Grafana   http://localhost:3001  (admin / admin)
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: streampulse
+      POSTGRES_PASSWORD: streampulse
+      POSTGRES_DB: streampulse
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U streampulse -d streampulse"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ./backend
+    environment:
+      STREAMPULSE_DATABASE_URL: postgresql+psycopg2://streampulse:streampulse@db:5432/streampulse
+      STREAMPULSE_INGEST_API_KEY: dev-key
+      STREAMPULSE_CORS_ORIGINS: '["http://localhost:8080","http://localhost:5173"]'
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  simulator:
+    build: ./backend
+    # Load 30 minutes of history, then stream live traffic. After 3 minutes the live
+    # stream degrades the "fastly" CDN so the dashboards and alerts have something to show.
+    command:
+      - sh
+      - -c
+      - >-
+        python -m simulator --url http://api:8000 --api-key dev-key backfill --minutes 30 --rate 2
+        && python -m simulator --url http://api:8000 --api-key dev-key
+        --incident-cdn fastly --incident-after 180 live --rate 6
+    depends_on:
+      api:
+        condition: service_healthy
+
+  web:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=2d
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/rules.yml:/etc/prometheus/rules.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - api
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/streampulse.json
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+
+volumes:
+  pgdata:
