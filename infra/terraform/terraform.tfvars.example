@@ -1,0 +1,4 @@
+# cp terraform.tfvars.example terraform.tfvars
+region        = "us-east-1"
+environment   = "dev"
+api_image_tag = "replace-with-git-sha"
