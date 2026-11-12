@@ -1,0 +1,8 @@
+fastapi==0.162.5
+uvicorn[standard]==0.54.0
+SQLAlchemy==2.1.8
+psycopg2-binary==2.9.13
+pydantic-settings==2.16.2
+prometheus-client==0.26.0
+strawberry-graphql[fastapi]==0.341.2
+httpx==0.28.1
